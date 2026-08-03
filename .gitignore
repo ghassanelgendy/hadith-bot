@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Runtime state & secrets (never commit)
+tiktok_session.json
+state.json
+hadiths_reference.json
+
+# Generated output (videos, images, logs, previews, screenshots)
+output/
+
+# OS
+.DS_Store
