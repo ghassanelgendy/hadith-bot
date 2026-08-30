@@ -37,7 +37,7 @@ video, audio mixing) is generated locally.
    appears on the profile before ever retrying, preventing duplicate posts.
    New posts may show as "under review" for a few minutes before going public.
 6. **Notify** — after posting, a WhatsApp confirmation is sent (Arabic matn +
-   "✅ Posted • Hadith N") via the optional OpenClaw WhatsApp gateway.
+   blank line + "Posted • Hadith N" + video URL, without emojis) via the optional OpenClaw WhatsApp gateway.
 
 ## Requirements
 
