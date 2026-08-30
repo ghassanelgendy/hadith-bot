@@ -26,7 +26,7 @@ def main():
         msg = "No TikTok session found. Run: python run_daily.py --login"
         print(msg)
         if not args.no_post:
-            send_whatsapp("❌ TikTok post FAILED\nNo TikTok session saved on the server. Log in via the dashboard (Login to TikTok -> QR).")
+            send_whatsapp("TikTok post FAILED\nNo TikTok session saved on the server. Log in via the dashboard (Login to TikTok -> QR).")
         sys.exit(1)
 
     try:
@@ -52,23 +52,31 @@ def main():
             print("Skipping upload (--no-post).")
             return
 
-        post_video(video_path, caption, post_number=hadith.get("post_number", 1))
+        post_url = post_video(video_path, caption, post_number=hadith.get("post_number", 1))
     except Exception as exc:
         traceback.print_exc()
         ref = ""
         try:
             h = pick_today()
             if h:
-                ref = f"\n📖 {h['collection']} #{h.get('hadith_number')} (post {h.get('post_number', '?')})"
+                ref = f"\nHadith {h['collection']} #{h.get('hadith_number')} (post {h.get('post_number', '?')})"
         except Exception:
             pass
-        send_whatsapp(f"❌ TikTok post FAILED\n{str(exc)[:280]}{ref}")
+        send_whatsapp(f"TikTok post FAILED\n{str(exc)[:280]}{ref}")
         sys.exit(1)
 
-    send_whatsapp(
-        f"{hadith['arabic']}\n"
-        f"✅ Posted • Hadith {hadith.get('hadith_number')}"
-    )
+    msg = f"{hadith['arabic']}\n\nPosted • Hadith {hadith.get('hadith_number')}"
+    if post_url:
+        msg += f"\n{post_url}"
+
+    ok = send_whatsapp(msg)
+    if not ok:
+        print(
+            "ALERT DELIVERY FAILED: post succeeded but the WhatsApp notification "
+            "could not be delivered after retries. Check the OpenClaw gateway.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
