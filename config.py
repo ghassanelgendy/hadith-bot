@@ -30,6 +30,6 @@ TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload"
 # so instead we search TikTok's music API for a matching sound and MIX its
 # audio track into the video with ffmpeg before uploading. The posted video
 # then plays the sound as its own audio track.
-SOUND_MIX_SEARCH = "ابتهال"
+SOUND_MIX_SEARCH = "https://www.tiktok.com/music/%D8%A7%D9%84%D8%B5%D9%88%D8%AA-%D8%A7%D9%84%D8%A3%D8%B5%D9%84%D9%8A-7654010784007211796"
 SOUND_MIX_ENABLED = True
 SOUND_MIX_VOLUME = 0.85

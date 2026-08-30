@@ -251,9 +251,60 @@ def _session_headers():
 
 
 def _find_sound(search):
-    """Search TikTok's music API (same endpoint the Studio panel uses) and
-    return a RANDOM playable match (title, author, audio_url), so different
-    ابتهال tracks get used across posts."""
+    """Resolve a sound from TikTok. If the search is a direct TikTok music URL,
+    navigates to it in Playwright and intercepts the CDN audio URL from network traffic.
+    Otherwise, searches the TikTok music API."""
+    if search.startswith("http://") or search.startswith("https://") or "/music/" in search:
+        print("find_sound: resolving direct URL:", search)
+        with sync_playwright() as pw:
+            browser = _browser(pw, headless=True, channel="chrome")
+            try:
+                context = browser.new_context(user_agent=USER_AGENT)
+                context.add_init_script(STEALTH_JS)
+                page = context.new_page()
+                audio_urls = []
+                
+                def on_req(request):
+                    u = request.url
+                    # Match any .mp3 link, mime_type=audio link, or standard tiktokcdn CDN audio URLs
+                    if ("mime_type=audio" in u or ".mp3" in u or "audio_mpeg" in u or ("tiktokcdn.com" in u and "/tos/" in u)) and u not in audio_urls:
+                        audio_urls.append(u)
+                        
+                page.on("request", on_req)
+                page.goto(search, wait_until="networkidle", timeout=60000)
+                
+                # Wait up to 10 seconds for the audio request to appear
+                for _ in range(20):
+                    if audio_urls:
+                        break
+                    page.wait_for_timeout(500)
+                
+                title = page.title() or "Locked Sound"
+                if " - " in title:
+                    title, author = title.split(" - ", 1)
+                    title = title.strip()
+                    author = author.replace("| TikTok", "").strip()
+                else:
+                    title = title.replace("| TikTok", "").strip()
+                    author = "Unknown"
+                
+                if not audio_urls:
+                    print("find_sound: failed to capture audio URL for", search)
+                    return None
+                    
+                print(f"find_sound: successfully resolved to '{title}' by '{author}'")
+                return {
+                    "title": title,
+                    "author": author,
+                    "url": audio_urls[0],
+                    "duration": 60,
+                }
+            except Exception as e:
+                print("find_sound: error resolving URL:", e)
+                return None
+            finally:
+                browser.close()
+
     with sync_playwright() as pw:
         browser = _browser(pw, headless=True, channel="chrome")
         try:
@@ -277,7 +328,7 @@ def _find_sound(search):
             )
             if not res:
                 return None
-            # Avoid repeating the same ابتهال track on consecutive posts.
+            # Avoid repeating the same track on consecutive posts.
             state = load_state()
             last = state.get("last_sound")
             it = random.choice(res)
@@ -293,6 +344,9 @@ def _find_sound(search):
                 "url": it["play_url"]["uri"],
                 "duration": it["duration"],
             }
+        except Exception as exc:
+            print("find_sound: api search failed:", exc)
+            return None
         finally:
             browser.close()
 
@@ -480,6 +534,19 @@ def _newest_own_video(context, username):
         pass
     finally:
         p.close()
+    return None
+
+
+def _already_posted(context, username, before):
+    """Check once whether a new video has appeared since `before`. Used right
+    before retrying a round, so a slow-to-propagate success from a prior
+    round (error screen shown, but the post actually went through) is
+    detected instead of blindly re-uploading and creating a duplicate."""
+    if not username or not before:
+        return None
+    now = _newest_own_video(context, username)
+    if now and now != before:
+        return now
     return None
 
 
@@ -673,6 +740,17 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
 
             for round_no in range(1, max_rounds + 1):
                 print(f"post round {round_no}/{max_rounds}")
+
+                if round_no > 1:
+                    # A prior round may have actually posted despite showing an
+                    # error/reset (TikTok's profile can be slow to update) - check
+                    # before re-uploading to avoid a duplicate post.
+                    posted_id = _already_posted(context, username, before)
+                    if posted_id:
+                        post_url = f"https://www.tiktok.com/@{username}/video/{posted_id}"
+                        print("Posted successfully (detected before retrying):", post_url)
+                        return post_url
+
                 page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
                 file_input = page.locator('input[type="file"]').first
                 try:
@@ -773,8 +851,9 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
                             time.sleep(10)
                             now = _newest_own_video(context, username)
                             if now and now != before:
-                                print("Posted successfully (new video appeared):", f"https://www.tiktok.com/@{username}/video/{now}")
-                                return
+                                post_url = f"https://www.tiktok.com/@{username}/video/{now}"
+                                print("Posted successfully (new video appeared):", post_url)
+                                return post_url
                     print("no new video after error screen -> retrying in a fresh round")
                     continue
 
@@ -789,12 +868,19 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
                 time.sleep(5)
                 url = page.url
                 if posted_id:
-                    print("Posted successfully:", f"https://www.tiktok.com/@{username}/video/{posted_id}")
-                    return
+                    post_url = f"https://www.tiktok.com/@{username}/video/{posted_id}"
+                    print("Posted successfully:", post_url)
+                    return post_url
                 # If we navigated away from the upload page, treat it as success
                 if "tiktokstudio/upload" not in url and "upload" not in url:
+                    if username and before:
+                        now = _newest_own_video(context, username)
+                        if now and now != before:
+                            post_url = f"https://www.tiktok.com/@{username}/video/{now}"
+                            print("Posted successfully (navigated away):", post_url)
+                            return post_url
                     print("Posted successfully (navigated away from upload page):", url)
-                    return
+                    return None
                 # Still on upload page - studio may have crashed; retry once more
                 include_extras = False
                 print("still on upload page - retrying without sound/cover")
