@@ -117,12 +117,16 @@ def load_hadiths():
             if not matn:
                 reject(collection, hid, inbook, "matn has no renderable characters in the font")
                 continue
+            book_name = chapters.get(h.get("chapterId"), {}).get("english", "")
+            if book_name == "Introduction":
+                reject(collection, hid, inbook, "introduction narrator report, not a standalone Prophetic hadith")
+                continue
             hadiths.append(
                 {
                     "id": f"{collection}-{h['id']}",
                     "collection": collection,
                     "hadith_number": hid,
-                    "book": chapters.get(h.get("chapterId"), {}).get("english", ""),
+                    "book": book_name,
                     "narrator": narrator,
                     "english": text,
                     "isnad": isnad,

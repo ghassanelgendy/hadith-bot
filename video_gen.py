@@ -8,7 +8,7 @@ import imageio_ffmpeg
 from config import IMAGE_HEIGHT, IMAGE_WIDTH, OUTPUT_DIR
 
 FPS = 30
-DURATION = 7
+DURATION = 15
 ZOOM_TEXT_START = 0.93
 ZOOM_TEXT_END = 1.0
 

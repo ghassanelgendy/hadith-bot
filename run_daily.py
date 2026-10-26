@@ -6,7 +6,7 @@ import traceback
 from hadith_picker import load_state, pick_today
 from image_gen import generate_image, generate_layers, pick_palette
 from openclaw_notify import send_whatsapp
-from tiktok_poster import build_caption, login, post_video
+from tiktok_poster import build_caption, fetch_sharh, login, post_video
 from video_gen import generate_video
 
 from config import OUTPUT_DIR, SESSION_FILE, STATE_FILE
@@ -45,14 +45,18 @@ def main():
         )
         video_path = generate_video(bg, txt, OUTPUT_DIR / "hadith.mp4")
         print("Created:", video_path)
-        caption = build_caption(hadith)
+        sharh = fetch_sharh(hadith)
+        caption = build_caption(hadith, sharh=sharh)
         print("Caption:", caption.replace("\n", " | "))
 
         if args.no_post:
             print("Skipping upload (--no-post).")
             return
 
-        post_url = post_video(video_path, caption, post_number=hadith.get("post_number", 1))
+        post_url = post_video(
+            video_path, caption, post_number=hadith.get("post_number", 1),
+            sharh=sharh, hadith=hadith,
+        )
     except Exception as exc:
         traceback.print_exc()
         ref = ""

@@ -6,6 +6,7 @@ ASSETS_DIR = BASE_DIR / "assets"
 OUTPUT_DIR = BASE_DIR / "output"
 STATE_FILE = BASE_DIR / "state.json"
 SESSION_FILE = BASE_DIR / "tiktok_session.json"
+PENDING_COMMENT_FILE = BASE_DIR / "pending_comment.json"
 
 DATASETS = {
     "bukhari": DATA_DIR / "bukhari.json",

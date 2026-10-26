@@ -4,6 +4,7 @@ import random
 import re
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from zxingcpp import read_barcodes
 from config import (
     CAPTION_HASHTAGS,
     OUTPUT_DIR,
+    PENDING_COMMENT_FILE,
     SESSION_FILE,
     SOUND_MIX_ENABLED,
     SOUND_MIX_SEARCH,
@@ -24,7 +26,7 @@ from hadith_picker import load_state, save_state
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 )
 
 STEALTH_JS = """
@@ -32,6 +34,27 @@ Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
 window.chrome = window.chrome || { runtime: {} };
 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
 Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+const brands = [
+    { brand: "Not A(Brand", version: "24" },
+    { brand: "Chromium", version: "152" },
+    { brand: "Google Chrome", version: "152" }
+];
+Object.defineProperty(navigator, 'userAgentData', {
+    get: () => ({
+        brands,
+        mobile: false,
+        platform: "Linux",
+        getHighEntropyValues: () => Promise.resolve({
+            brands,
+            mobile: false,
+            platform: "Linux",
+            platformVersion: "6.6.0",
+            architecture: "x86",
+            model: "",
+            uaFullVersion: "152.0.7977.82"
+        })
+    })
+});
 const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
 if (originalQuery) {
   window.navigator.permissions.query = (parameters) =>
@@ -43,9 +66,13 @@ if (originalQuery) {
 
 
 def _browser(pw, headless=True, channel=None):
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--headless=new",
+    ]
     kwargs = dict(
         headless=headless,
-        args=["--disable-blink-features=AutomationControlled"],
+        args=args,
     )
     if channel:
         kwargs["channel"] = channel
@@ -250,6 +277,24 @@ def _session_headers():
     }
 
 
+def _safe_goto(page, url, wait_until="domcontentloaded", timeout=60000, max_attempts=3):
+    """Navigate to a URL with automatic retry for transient network errors like net::ERR_NETWORK_CHANGED."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            page.goto(url, wait_until=wait_until, timeout=timeout)
+            return True
+        except Exception as exc:
+            err_str = str(exc)
+            if ("ERR_NETWORK_CHANGED" in err_str or "ERR_CONNECTION" in err_str or "timeout" in err_str.lower()) and attempt < max_attempts:
+                print(f"safe_goto: transient navigation error on attempt {attempt}/{max_attempts} ({exc}), retrying in {attempt * 3}s...")
+                page.wait_for_timeout(attempt * 3000)
+            else:
+                if attempt == max_attempts:
+                    raise
+                page.wait_for_timeout(2000)
+    return False
+
+
 def _find_sound(search):
     """Resolve a sound from TikTok. If the search is a direct TikTok music URL,
     navigates to it in Playwright and intercepts the CDN audio URL from network traffic.
@@ -271,7 +316,16 @@ def _find_sound(search):
                         audio_urls.append(u)
                         
                 page.on("request", on_req)
-                page.goto(search, wait_until="networkidle", timeout=60000)
+                for attempt in range(3):
+                    try:
+                        page.goto(search, wait_until="networkidle", timeout=60000)
+                        break
+                    except Exception as exc:
+                        if attempt < 2 and ("ERR_NETWORK_CHANGED" in str(exc) or "timeout" in str(exc).lower()):
+                            print(f"find_sound: retry {attempt + 1}/2 navigating to sound page after {exc}")
+                            page.wait_for_timeout(3000)
+                        else:
+                            raise
                 
                 # Wait up to 10 seconds for the audio request to appear
                 for _ in range(20):
@@ -392,7 +446,231 @@ def _mix_sound(video_path, search=SOUND_MIX_SEARCH, volume=SOUND_MIX_VOLUME):
         audio_tmp.unlink(missing_ok=True)
 
 
-def build_caption(hadith):
+def _strip_tashkeel(text):
+    """Remove Arabic combining diacritics (harakat) so Draft.js / TikTok input
+    never drops spaces after a vowel mark."""
+    if not text:
+        return ""
+    out = [
+        ch
+        for ch in text
+        if not (0x064B <= ord(ch) <= 0x0655 or ord(ch) in (0x0670, 0xFEFF))
+    ]
+    return " ".join("".join(out).split())
+
+
+def _extract_sharh_from_page(page, hadith):
+    """Search Dorar.net (الموسوعة الحديثية - الدرر السنية) for the hadith's
+    Arabic matn and return the clean Arabic شرح الحديث."""
+    raw_arabic = hadith.get("arabic", "")
+    # Remove expanded sallallah phrase so search tokens focus on distinct matn words
+    cleaned = raw_arabic.replace("صلى الله عليه وسلم", " ")
+    words = re.sub(r"[^\u0621-\u064A\s]", " ", cleaned).split()
+    if not words:
+        words = re.sub(r"[^\u0621-\u064A\s]", " ", raw_arabic).split()
+    if not words:
+        return ""
+
+    queries = [" ".join(words[:10])]
+    if len(words) > 10:
+        queries.append(" ".join(words[-10:]))
+    if len(words) > 6:
+        queries.append(" ".join(words[:6]))
+
+    target_source = "صحيح البخاري" if hadith.get("collection") == "bukhari" else "صحيح مسلم"
+    xplain_id = None
+
+    for q_text in queries:
+        q = urllib.parse.quote(q_text)
+        try:
+            _safe_goto(page, f"https://dorar.net/hadith/search?q={q}", wait_until="domcontentloaded", timeout=20000)
+            xplain_id = page.evaluate(
+                """(targetSource) => {
+                    const links = Array.from(document.querySelectorAll("a.xplain[xplain]"))
+                        .filter(a => a.getAttribute("xplain") && a.getAttribute("xplain") !== "0");
+                    if (!links.length) return null;
+                    for (const a of links) {
+                        const card = a.closest(".border-bottom") || a.parentElement?.parentElement;
+                        if (card && (card.innerText || "").includes(targetSource)) {
+                            return a.getAttribute("xplain");
+                        }
+                    }
+                    return links[0].getAttribute("xplain");
+                }""",
+                target_source,
+            )
+            if xplain_id:
+                break
+        except Exception as exc:
+            print(f"fetch_sharh: search error for {q_text!r}: {exc}")
+
+    if not xplain_id:
+        print(f"fetch_sharh: no Dorar xplain ID found for {hadith.get('id')}")
+        return ""
+
+    try:
+        _safe_goto(page, f"https://dorar.net/hadith/explain/{xplain_id}", wait_until="domcontentloaded", timeout=20000)
+        raw = page.locator("body").inner_text()
+        if "شرح الحديث" in raw:
+            raw = raw.split("شرح الحديث", 1)[-1].lstrip(" :：")
+        raw = raw.split("https://dorar.net")[0].strip()
+        sharh = _strip_tashkeel(raw)
+        print(f"fetch_sharh: resolved Dorar xplain={xplain_id} ({len(sharh)} chars)")
+        return sharh
+    except Exception as exc:
+        print(f"fetch_sharh: explain error for xplain={xplain_id}: {exc}")
+        return ""
+
+
+def fetch_sharh(hadith, page=None):
+    """Fetch authentic Arabic sharh from Dorar.net for `hadith`.
+    Reuses `page` if provided, or opens a temporary headless Chrome session."""
+    if not hadith or not hadith.get("arabic"):
+        return ""
+    if page is not None:
+        return _extract_sharh_from_page(page, hadith)
+    try:
+        with sync_playwright() as pw:
+            browser = _browser(pw, headless=True, channel="chrome")
+            try:
+                ctx = browser.new_context(user_agent=USER_AGENT)
+                ctx.add_init_script(STEALTH_JS)
+                p = ctx.new_page()
+                return _extract_sharh_from_page(p, hadith)
+            finally:
+                browser.close()
+    except Exception as exc:
+        print(f"fetch_sharh: browser error: {exc}")
+        return ""
+
+
+def post_comment(context, post_url, sharh, max_attempts=3):
+    """Post the Arabic sharh as a comment on the uploaded TikTok video with full diacritics (tashkeel)."""
+    if not post_url or not sharh:
+        return False
+    sharh_clean = " ".join(sharh.split())
+    # Strip only trailing vowels immediately before whitespace/punctuation to prevent TikTok text normalizer from collapsing spaces
+    sharh_clean = re.sub(r"[\u064B-\u0652]+(?=[\s\.,،:؛\?!]|$)", "", sharh_clean)
+    comment_text = sharh_clean if sharh_clean.startswith("شرح الحديث") else f"شرح الحديث: {sharh_clean}"
+    if len(comment_text) > 900:
+        cut = comment_text[:900].rfind(".")
+        if cut < 300:
+            cut = comment_text[:900].rfind("،")
+        comment_text = comment_text[: cut + 1] if cut > 300 else comment_text[:897] + "..."
+
+    try:
+        context.grant_permissions(["clipboard-read", "clipboard-write"])
+    except Exception:
+        pass
+
+    for attempt in range(1, max_attempts + 1):
+        p = context.new_page()
+        published_cid = []
+
+        def _on_response(resp):
+            if "/api/comment/publish" in resp.url:
+                try:
+                    data = resp.json()
+                    cid = (data.get("comment") or {}).get("cid")
+                    status_code = data.get("status_code", -1)
+                    if cid or status_code == 0:
+                        published_cid.append(cid or "ok")
+                except Exception:
+                    pass
+
+        p.on("response", _on_response)
+        try:
+            p.set_viewport_size({"width": 1280, "height": 900})
+            _safe_goto(p, post_url, wait_until="domcontentloaded", timeout=30000)
+            p.wait_for_timeout(3500)
+            p.evaluate(
+                """() => {
+                    document.querySelectorAll("section[aria-label*='Notifications'], inapp-notif, .TUXModal-overlay").forEach(e => e.remove());
+                }"""
+            )
+            icon_btn = p.locator("[data-e2e='comment-icon'] button, [data-e2e='comment-icon']").first
+            box = p.locator("[data-e2e='comment-input']").first
+            icon_btn.wait_for(state="visible", timeout=20000)
+            for _ in range(4):
+                if box.is_visible():
+                    break
+                try:
+                    icon_btn.click(force=True, timeout=3000)
+                except Exception:
+                    try:
+                        icon_btn.evaluate("el => el.click()")
+                    except Exception:
+                        pass
+                p.wait_for_timeout(2000)
+            box.wait_for(state="visible", timeout=15000)
+            box.click(force=True, timeout=10000)
+            p.wait_for_timeout(300)
+            # Write to clipboard and paste natively into the editor to guarantee perfect word spacing and diacritics
+            p.evaluate("txt => navigator.clipboard.writeText(txt)", comment_text)
+            p.wait_for_timeout(100)
+            p.keyboard.press("Control+V")
+            p.wait_for_timeout(1000)
+
+            p.evaluate(
+                """() => {
+                    document.querySelectorAll("section[aria-label*='Notifications'], inapp-notif, .TUXModal-overlay").forEach(e => e.remove());
+                }"""
+            )
+            # Submit via React onClick handler with nativeEvent
+            p.evaluate("""() => {
+                const btn = document.querySelector("[data-e2e='comment-post']");
+                if (!btn) return;
+                const reactKey = Object.keys(btn).find(k => k.startsWith("__reactProps$"));
+                if (reactKey && btn[reactKey] && typeof btn[reactKey].onClick === "function") {
+                    btn[reactKey].onClick({
+                        preventDefault: () => {},
+                        stopPropagation: () => {},
+                        nativeEvent: new MouseEvent("click", { bubbles: true, cancelable: true })
+                    });
+                }
+            }""")
+            post_btn = p.locator("[data-e2e='comment-post']").first
+            try:
+                post_btn.click(force=True, timeout=3000)
+            except Exception:
+                pass
+            for _ in range(20):
+                if published_cid:
+                    print(f"post_comment: posted sharh comment cid={published_cid[0]} on {post_url}")
+                    p.close()
+                    return True
+                p.wait_for_timeout(500)
+            print(f"post_comment: attempt {attempt}/{max_attempts} clicked Post but no cid confirmed yet")
+        except Exception as exc:
+            print(f"post_comment: attempt {attempt}/{max_attempts} failed ({type(exc).__name__}: {exc})")
+        finally:
+            try:
+                p.close()
+            except Exception:
+                pass
+        if attempt < max_attempts:
+            time.sleep(5)
+    return False
+
+
+def queue_pending_comment(post_url, sharh, hadith=None):
+    """Queue an Arabic sharh comment to be posted later at 8:00 PM Cairo Time (17:00 UTC)."""
+    if not post_url or not sharh:
+        return
+    data = {
+        "post_url": post_url,
+        "sharh": sharh,
+        "hadith_id": (hadith or {}).get("id", ""),
+        "hadith_number": (hadith or {}).get("hadith_number", ""),
+        "collection": (hadith or {}).get("collection", ""),
+        "queued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    with open(PENDING_COMMENT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    print(f"queue_pending_comment: queued sharh comment for {post_url} (scheduled for 8:00 PM)")
+
+
+def build_caption(hadith, sharh=None):
     lines = []
     text = _clean_pbuh(hadith["english"])
     if len(text) > 480:
@@ -402,6 +680,12 @@ def build_caption(hadith):
         lines.append(_clean_pbuh(hadith["narrator"]))
     collection = f"Sahih al-{hadith['collection'].title()}"
     lines.append(f"{collection} - Hadith {hadith['hadith_number']}")
+    if sharh:
+        clean_sharh = _strip_tashkeel(sharh)
+        if len(clean_sharh) > 900:
+            cut = clean_sharh[:900].rfind(".")
+            clean_sharh = clean_sharh[: cut + 1] if cut > 250 else clean_sharh[:897] + "..."
+        lines.append(f"شرح الحديث: {clean_sharh}")
     lines.append(" ".join(CAPTION_HASHTAGS))
     return "\n".join(lines)
 
@@ -521,17 +805,36 @@ def _studio_username(page):
     return ""
 
 
-def _newest_own_video(context, username):
+def _newest_own_video(context, username=None):
+    """Retrieve the ID of the latest non-pinned published video.
+    Checks tiktokstudio/content where the full table of posts and publish dates
+    is present and pinned items can be reliably excluded."""
     p = context.new_page()
     try:
-        p.goto(f"https://www.tiktok.com/@{username}", wait_until="domcontentloaded", timeout=60000)
+        _safe_goto(p, "https://www.tiktok.com/tiktokstudio/content", wait_until="domcontentloaded", timeout=45000)
         p.wait_for_timeout(4000)
-        links = p.locator("a[href*='/video/']")
-        if links.count() > 0:
-            href = links.first.get_attribute("href") or ""
-            return href.rstrip("/").split("/")[-1]
-    except Exception:
-        pass
+        vid = p.evaluate("""() => {
+            const anchors = document.querySelectorAll("a[href*='/video/']");
+            for (const a of anchors) {
+                let row = a;
+                for (let i = 0; i < 10 && row.parentElement; i++) {
+                    row = row.parentElement;
+                    if (row.querySelector("button") && row.innerText.includes("Everyone")) break;
+                }
+                const text = row ? row.innerText : "";
+                if (!text.includes("Pinned") && !text.includes("مُثبَّت")) {
+                    const parts = a.href.split("/video/");
+                    if (parts.length > 1) {
+                        return parts[1].replace(/\\D/g, "");
+                    }
+                }
+            }
+            return null;
+        }""")
+        if vid:
+            return vid
+    except Exception as exc:
+        print(f"_newest_own_video error: {exc}")
     finally:
         p.close()
     return None
@@ -542,7 +845,7 @@ def _already_posted(context, username, before):
     before retrying a round, so a slow-to-propagate success from a prior
     round (error screen shown, but the post actually went through) is
     detected instead of blindly re-uploading and creating a duplicate."""
-    if not username or not before:
+    if not before:
         return None
     now = _newest_own_video(context, username)
     if now and now != before:
@@ -698,7 +1001,7 @@ def _fill_editor(page, caption, post_number, cover_path, video_path, max_attempt
     return False
 
 
-def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
+def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3, sharh=None, hadith=None):
     """Post a video to TikTok Studio (web upload).
 
     Reliable flow, verified against the live Studio UI:
@@ -719,7 +1022,9 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
       7. Confirm via the dialog's own Post button if a dialog appears.
       8. Verify success: a new video appears on the profile, or the page
          navigated away from /tiktokstudio/upload (e.g. to /content).
-      9. On failure, re-run the whole round (up to max_rounds) in the same
+      9. Automatically post the Arabic sharh (from Dorar.net) as a comment on
+         the newly published video.
+     10. On failure, re-run the whole round (up to max_rounds) in the same
          browser - no recursion, no orphan browsers.
     """
     upload_path = video_path
@@ -733,6 +1038,9 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
             context = browser.new_context(storage_state=str(SESSION_FILE), user_agent=USER_AGENT)
             context.add_init_script(STEALTH_JS)
             page = context.new_page()
+
+            if not sharh and hadith:
+                sharh = fetch_sharh(hadith, page=page)
 
             username = None
             before = None
@@ -749,16 +1057,24 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
                     if posted_id:
                         post_url = f"https://www.tiktok.com/@{username}/video/{posted_id}"
                         print("Posted successfully (detected before retrying):", post_url)
+                        if sharh:
+                            post_comment(context, post_url, sharh)
                         return post_url
 
-                page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
+                _safe_goto(page, TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
                 file_input = page.locator('input[type="file"]').first
                 try:
                     file_input.wait_for(state="attached", timeout=45000)
                 except Exception:
-                    page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
+                    _safe_goto(page, TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
                     file_input = page.locator('input[type="file"]').first
                     file_input.wait_for(state="attached", timeout=45000)
+
+                if before is None:
+                    username = _studio_username(page)
+                    before = _newest_own_video(context, username)
+                    print(f"Initial latest video before posting: {before}")
+
                 file_input.set_input_files(str(upload_path))
 
                 if not _fill_editor(
@@ -773,7 +1089,6 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
 
                 if username is None:
                     username = _studio_username(page)
-                    before = _newest_own_video(context, username) if username else None
 
                 post_button = None
                 for name, loc, require_right in (
@@ -843,41 +1158,47 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3):
                 if _studio_error(page):
                     # An error screen right after clicking Post does NOT mean the
                     # post failed - it can appear even though the video was
-                    # created (that's how hadith 3 got posted twice). Check the
-                    # profile for the new video before considering a retry.
+                    # created (that's how duplicate posts happen). Check studio
+                    # content for the new video before considering a retry.
                     print("studio error after clicking Post - checking if the post went through")
-                    if username and before:
-                        for _ in range(10):
+                    if before:
+                        for _ in range(12):
                             time.sleep(10)
                             now = _newest_own_video(context, username)
                             if now and now != before:
-                                post_url = f"https://www.tiktok.com/@{username}/video/{now}"
+                                post_url = f"https://www.tiktok.com/@{username or 'user'}/video/{now}"
                                 print("Posted successfully (new video appeared):", post_url)
+                                if sharh:
+                                    queue_pending_comment(post_url, sharh, hadith)
                                 return post_url
                     print("no new video after error screen -> retrying in a fresh round")
                     continue
 
                 posted_id = None
-                if username and before:
+                if before:
                     for _ in range(15):
-                        time.sleep(12)
+                        time.sleep(10)
                         now = _newest_own_video(context, username)
                         if now and now != before:
                             posted_id = now
                             break
-                time.sleep(5)
+                time.sleep(3)
                 url = page.url
                 if posted_id:
-                    post_url = f"https://www.tiktok.com/@{username}/video/{posted_id}"
+                    post_url = f"https://www.tiktok.com/@{username or 'user'}/video/{posted_id}"
                     print("Posted successfully:", post_url)
+                    if sharh:
+                        queue_pending_comment(post_url, sharh, hadith)
                     return post_url
                 # If we navigated away from the upload page, treat it as success
                 if "tiktokstudio/upload" not in url and "upload" not in url:
-                    if username and before:
+                    if before:
                         now = _newest_own_video(context, username)
                         if now and now != before:
-                            post_url = f"https://www.tiktok.com/@{username}/video/{now}"
+                            post_url = f"https://www.tiktok.com/@{username or 'user'}/video/{now}"
                             print("Posted successfully (navigated away):", post_url)
+                            if sharh:
+                                queue_pending_comment(post_url, sharh, hadith)
                             return post_url
                     print("Posted successfully (navigated away from upload page):", url)
                     return None

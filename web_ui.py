@@ -16,7 +16,7 @@ from config import OUTPUT_DIR, SESSION_FILE, STATE_FILE
 from hadith_picker import load_state, pick_today, preview_next
 from image_gen import generate_image, generate_layers, pick_palette
 from manual_login import manual_login
-from tiktok_poster import build_caption, login_password, login_qr, post_video
+from tiktok_poster import build_caption, fetch_sharh, login_password, login_qr, post_video
 from video_gen import generate_video
 
 HOST = "0.0.0.0"
@@ -145,8 +145,9 @@ def job_post():
         hadith, OUTPUT_DIR / "hadith_bg.png", OUTPUT_DIR / "hadith_text.png", palette=palette
     )
     video = generate_video(bg, txt, OUTPUT_DIR / "hadith.mp4")
-    caption = build_caption(hadith)
-    post_video(video, caption, post_number=hadith.get("post_number", 1))
+    sharh = fetch_sharh(hadith)
+    caption = build_caption(hadith, sharh=sharh)
+    post_video(video, caption, post_number=hadith.get("post_number", 1), sharh=sharh, hadith=hadith)
     log(f"Posted {hadith['id']}")
 
 
