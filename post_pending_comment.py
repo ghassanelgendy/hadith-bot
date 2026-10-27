@@ -50,6 +50,7 @@ def main():
                 storage_state=str(SESSION_FILE),
                 user_agent=USER_AGENT,
                 viewport={"width": 1280, "height": 900},
+                permissions=["clipboard-read", "clipboard-write"],
             )
             ctx.add_init_script(STEALTH_JS)
             success = post_comment(ctx, post_url, sharh, max_attempts=3)

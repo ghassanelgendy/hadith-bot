@@ -552,11 +552,16 @@ def post_comment(context, post_url, sharh, max_attempts=3):
     # Strip only trailing vowels immediately before whitespace/punctuation to prevent TikTok text normalizer from collapsing spaces
     sharh_clean = re.sub(r"[\u064B-\u0652]+(?=[\s\.,،:؛\?!]|$)", "", sharh_clean)
     comment_text = sharh_clean if sharh_clean.startswith("شرح الحديث") else f"شرح الحديث: {sharh_clean}"
-    if len(comment_text) > 900:
-        cut = comment_text[:900].rfind(".")
-        if cut < 300:
-            cut = comment_text[:900].rfind("،")
-        comment_text = comment_text[: cut + 1] if cut > 300 else comment_text[:897] + "..."
+    # TikTok web API passes comment text in the query string (?text=...); URL-encoded Arabic takes ~6 bytes/char.
+    # Exceeding ~280-300 chars causes reverse-proxy query length overflow and silent 0-byte drops.
+    MAX_COMMENT_LEN = 280
+    if len(comment_text) > MAX_COMMENT_LEN:
+        cut = comment_text[:MAX_COMMENT_LEN].rfind(".")
+        if cut < 140:
+            cut = comment_text[:MAX_COMMENT_LEN].rfind("،")
+        if cut < 140:
+            cut = comment_text[:MAX_COMMENT_LEN].rfind(" ")
+        comment_text = comment_text[:cut].strip() + "..." if cut > 100 else comment_text[:MAX_COMMENT_LEN - 3].strip() + "..."
 
     try:
         context.grant_permissions(["clipboard-read", "clipboard-write"])
@@ -568,7 +573,7 @@ def post_comment(context, post_url, sharh, max_attempts=3):
         published_cid = []
 
         def _on_response(resp):
-            if "/api/comment/publish" in resp.url:
+            if "/api/comment/publish" in resp.url and resp.request.method == "POST":
                 try:
                     data = resp.json()
                     cid = (data.get("comment") or {}).get("cid")
