@@ -63,14 +63,14 @@ def main():
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Successfully posted comment on {post_url}!")
         PENDING_COMMENT_FILE.unlink(missing_ok=True)
         try:
-            send_whatsapp(f"✅ Comment posted successfully!\nHadith #{hadith_num}\n{post_url}")
+            send_whatsapp(f"Comment posted successfully!\nHadith #{hadith_num}\n{post_url}")
         except Exception as e:
             print(f"WhatsApp notification error: {e}")
         return 0
     else:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to post comment after retries on {post_url}")
         try:
-            send_whatsapp(f"⚠️ Failed to post scheduled comment for Hadith #{hadith_num}\n{post_url}")
+            send_whatsapp(f"Failed to post scheduled comment for Hadith #{hadith_num}\n{post_url}")
         except Exception as e:
             print(f"WhatsApp notification error: {e}")
         return 1

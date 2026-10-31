@@ -548,6 +548,7 @@ def post_comment(context, post_url, sharh, max_attempts=3):
     """Post the Arabic sharh as a comment on the uploaded TikTok video with full diacritics (tashkeel)."""
     if not post_url or not sharh:
         return False
+    sharh = re.sub(r"[\U0001F000-\U0001FFFF☀-➿⬀-⯿️‍]", "", sharh)  # no emoji in comments
     sharh_clean = " ".join(sharh.split())
     # Strip only trailing vowels immediately before whitespace/punctuation to prevent TikTok text normalizer from collapsing spaces
     sharh_clean = re.sub(r"[\u064B-\u0652]+(?=[\s\.,،:؛\?!]|$)", "", sharh_clean)
