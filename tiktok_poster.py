@@ -600,6 +600,19 @@ def post_comment(context, post_url, sharh, max_attempts=3):
             for _ in range(4):
                 if box.is_visible():
                     break
+                # TikTok opens the side panel on "You may like"; the comment box only exists once the
+                # visible "Comments" tab is selected (the root cause of the recurring "no cid" failures).
+                try:
+                    tabs = p.get_by_text("Comments", exact=True)
+                    for i in range(tabs.count()):
+                        if tabs.nth(i).is_visible():
+                            tabs.nth(i).click(timeout=3000)
+                            break
+                except Exception:
+                    pass
+                p.wait_for_timeout(1500)
+                if box.is_visible():
+                    break
                 try:
                     icon_btn.click(force=True, timeout=3000)
                 except Exception:
@@ -647,6 +660,10 @@ def post_comment(context, post_url, sharh, max_attempts=3):
                     return True
                 p.wait_for_timeout(500)
             print(f"post_comment: attempt {attempt}/{max_attempts} clicked Post but no cid confirmed yet")
+            try:
+                p.screenshot(path=str(OUTPUT_DIR / f"comment_fail_{int(time.time())}.png"))
+            except Exception:
+                pass
         except Exception as exc:
             print(f"post_comment: attempt {attempt}/{max_attempts} failed ({type(exc).__name__}: {exc})")
         finally:
