@@ -36,14 +36,13 @@ video, audio mixing) is generated locally.
    reference + hashtags), and clicks Post. The bot verifies the video actually
    appears on the profile before ever retrying, preventing duplicate posts.
    New posts may show as "under review" for a few minutes before going public.
-6. **Notify** — after posting, a WhatsApp confirmation is sent (Arabic matn +
-   blank line + "Posted • Hadith N" + video URL, without emojis) via the optional OpenClaw WhatsApp gateway.
+6. **Notify** — after posting, a Telegram confirmation is sent (Arabic matn +
+   blank line + "Posted - Hadith N" + video URL, no emojis) through @MOUNIEEB_bot.
 
 ## Requirements
 
 - Python 3.11+
 - Google Chrome installed (the bot launches it via Playwright's `channel="chrome"`)
-- Docker (only for the optional WhatsApp notifications)
 
 ## Setup
 
@@ -95,12 +94,11 @@ network — run it with `.venv/bin/python web_ui.py` (default port 1517).
   posting history, live log viewer
 - **Systemd** (survives reboots): a `hadith-dashboard` user service unit
 
-## WhatsApp notifications (optional)
+## Telegram notifications
 
-`openclaw_notify.py` sends a message after each post through an OpenClaw
-WhatsApp gateway container. Set the recipient with the `WHATSAPP_TARGET`
-environment variable (e.g. `WHATSAPP_TARGET=+15551234567`); if it is unset,
-notifications are skipped.
+`telegram_notify.py` sends a plain-text message (no emojis) after each post, comment and failure.
+Credentials go in `telegram.json` (git-ignored): `{"token": "<bot token>", "chat_id": <owner id>}`.
+WhatsApp/OpenClaw alerts were dropped.
 
 ## Operations
 

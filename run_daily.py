@@ -5,7 +5,7 @@ import traceback
 
 from hadith_picker import load_state, pick_today
 from image_gen import generate_image, generate_layers, pick_palette
-from openclaw_notify import send_whatsapp
+from telegram_notify import send_telegram
 from tiktok_poster import build_caption, fetch_sharh, login, post_video
 from video_gen import generate_video
 
@@ -26,7 +26,7 @@ def main():
         msg = "No TikTok session found. Run: python run_daily.py --login"
         print(msg)
         if not args.no_post:
-            send_whatsapp("TikTok post FAILED\nNo TikTok session saved on the server. Log in via the dashboard (Login to TikTok -> QR).")
+            send_telegram("TikTok post FAILED\nNo TikTok session saved on the server. Log in via the dashboard (Login to TikTok -> QR).")
         sys.exit(1)
 
     try:
@@ -66,18 +66,18 @@ def main():
                 ref = f"\nHadith {h['collection']} #{h.get('hadith_number')} (post {h.get('post_number', '?')})"
         except Exception:
             pass
-        send_whatsapp(f"TikTok post FAILED\n{str(exc)[:280]}{ref}")
+        send_telegram(f"TikTok post FAILED\n{str(exc)[:280]}{ref}")
         sys.exit(1)
 
-    msg = f"{hadith['arabic']}\n\nPosted • Hadith {hadith.get('hadith_number')}"
+    msg = f"{hadith['arabic']}\n\nPosted - Hadith {hadith.get('hadith_number')}"
     if post_url:
         msg += f"\n{post_url}"
 
-    ok = send_whatsapp(msg)
+    ok = send_telegram(msg)
     if not ok:
         print(
-            "ALERT DELIVERY FAILED: post succeeded but the WhatsApp notification "
-            "could not be delivered after retries. Check the OpenClaw gateway.",
+            "ALERT DELIVERY FAILED: post succeeded but the Telegram notification "
+            "could not be delivered after retries. Check telegram.json.",
             file=sys.stderr,
         )
         sys.exit(1)

@@ -8,7 +8,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from config import PENDING_COMMENT_FILE, SESSION_FILE
-from openclaw_notify import send_whatsapp
+from telegram_notify import send_telegram
 from tiktok_poster import (
     STEALTH_JS,
     USER_AGENT,
@@ -63,16 +63,16 @@ def main():
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Successfully posted comment on {post_url}!")
         PENDING_COMMENT_FILE.unlink(missing_ok=True)
         try:
-            send_whatsapp(f"Comment posted successfully!\nHadith #{hadith_num}\n{post_url}")
+            send_telegram(f"Comment posted successfully!\nHadith #{hadith_num}\n{post_url}")
         except Exception as e:
-            print(f"WhatsApp notification error: {e}")
+            print(f"Telegram notification error: {e}")
         return 0
     else:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to post comment after retries on {post_url}")
         try:
-            send_whatsapp(f"Failed to post scheduled comment for Hadith #{hadith_num}\n{post_url}")
+            send_telegram(f"Failed to post scheduled comment for Hadith #{hadith_num}\n{post_url}")
         except Exception as e:
-            print(f"WhatsApp notification error: {e}")
+            print(f"Telegram notification error: {e}")
         return 1
 
 
