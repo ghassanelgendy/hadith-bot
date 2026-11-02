@@ -700,7 +700,26 @@ def queue_pending_comment(post_url, sharh, hadith=None):
     }
     with open(PENDING_COMMENT_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"queue_pending_comment: queued sharh comment for {post_url} (scheduled for 8:00 PM)")
+    print(f"queue_pending_comment: queued sharh comment for {post_url} (retry slot 17:00 UTC)")
+
+
+def comment_now_or_queue(context, post_url, sharh, hadith=None, settle_s=45):
+    """Comment in the same warm browser session right after the upload (a fresh headless session an hour
+    later triggers TikTok's CAPTCHA). The comment is queued first as a safety net: one attempt only here,
+    and on success the queue file is removed, otherwise the 17:00 UTC cron retries it."""
+    queue_pending_comment(post_url, sharh, hadith)
+    time.sleep(settle_s)  # let the new video finish processing before commenting
+    try:
+        ok = post_comment(context, post_url, sharh, max_attempts=1)
+    except Exception as exc:
+        print(f"comment_now_or_queue: {type(exc).__name__}: {exc}")
+        ok = False
+    if ok:
+        PENDING_COMMENT_FILE.unlink(missing_ok=True)
+        print("comment_now_or_queue: comment posted, queue cleared")
+    else:
+        print("comment_now_or_queue: not posted now; left queued for the scheduled retry")
+    return ok
 
 
 def build_caption(hadith, sharh=None):
@@ -1202,7 +1221,7 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3, 
                                 post_url = f"https://www.tiktok.com/@{username or 'user'}/video/{now}"
                                 print("Posted successfully (new video appeared):", post_url)
                                 if sharh:
-                                    queue_pending_comment(post_url, sharh, hadith)
+                                    comment_now_or_queue(context, post_url, sharh, hadith)
                                 return post_url
                     print("no new video after error screen -> retrying in a fresh round")
                     continue
@@ -1221,7 +1240,7 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3, 
                     post_url = f"https://www.tiktok.com/@{username or 'user'}/video/{posted_id}"
                     print("Posted successfully:", post_url)
                     if sharh:
-                        queue_pending_comment(post_url, sharh, hadith)
+                        comment_now_or_queue(context, post_url, sharh, hadith)
                     return post_url
                 # If we navigated away from the upload page, treat it as success
                 if "tiktokstudio/upload" not in url and "upload" not in url:
@@ -1231,7 +1250,7 @@ def post_video(video_path, caption, post_number=1, headless=True, max_rounds=3, 
                             post_url = f"https://www.tiktok.com/@{username or 'user'}/video/{now}"
                             print("Posted successfully (navigated away):", post_url)
                             if sharh:
-                                queue_pending_comment(post_url, sharh, hadith)
+                                comment_now_or_queue(context, post_url, sharh, hadith)
                             return post_url
                     print("Posted successfully (navigated away from upload page):", url)
                     return None

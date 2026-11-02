@@ -121,3 +121,7 @@ Delete `state.json` to reset the rotation. Logs live in `output/bot.log` and
   re-run `--login`.
 - **UI changes**: if TikTok Studio's page structure changes, update the selectors
   in `tiktok_poster.py`; failed runs save screenshots to `output/`.
+
+## Sharh comment
+
+Right after the video is posted, `comment_now_or_queue` comments in the same browser session (one attempt). If that fails (for example a TikTok CAPTCHA, which the bot never solves) the comment stays in `pending_comment.json` and the 17:00 UTC cron retries it once.
