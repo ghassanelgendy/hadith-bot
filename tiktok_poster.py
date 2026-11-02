@@ -546,6 +546,7 @@ def fetch_sharh(hadith, page=None):
 
 def post_comment(context, post_url, sharh, max_attempts=3):
     """Post the Arabic sharh as a comment on the uploaded TikTok video with full diacritics (tashkeel)."""
+    post_comment.last_failure = None
     if not post_url or not sharh:
         return False
     sharh = re.sub(r"[\U0001F000-\U0001FFFF☀-➿⬀-⯿️‍]", "", sharh)  # no emoji in comments
@@ -659,6 +660,15 @@ def post_comment(context, post_url, sharh, max_attempts=3):
                     p.close()
                     return True
                 p.wait_for_timeout(500)
+            if p.get_by_text("Drag the slider to fit the puzzle").count() or p.locator("#captcha_container, .captcha-verify-container").count():
+                try:
+                    p.screenshot(path=str(OUTPUT_DIR / f"comment_captcha_{int(time.time())}.png"))
+                except Exception:
+                    pass
+                # Retrying only makes TikTok's bot check harder, and the bot never solves CAPTCHAs.
+                post_comment.last_failure = "captcha"
+                print("post_comment: TikTok asked for a CAPTCHA; stopping, not retrying")
+                return False
             print(f"post_comment: attempt {attempt}/{max_attempts} clicked Post but no cid confirmed yet")
             try:
                 p.screenshot(path=str(OUTPUT_DIR / f"comment_fail_{int(time.time())}.png"))
