@@ -14,3 +14,4 @@ output/
 # OS
 .DS_Store
 telegram.json
+pending_comment.json
