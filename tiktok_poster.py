@@ -627,32 +627,29 @@ def post_comment(context, post_url, sharh, max_attempts=3):
             p.wait_for_timeout(300)
             # Write to clipboard and paste natively into the editor to guarantee perfect word spacing and diacritics
             p.evaluate("txt => navigator.clipboard.writeText(txt)", comment_text)
-            p.wait_for_timeout(100)
+            p.wait_for_timeout(300)
             p.keyboard.press("Control+V")
-            p.wait_for_timeout(1000)
+            p.wait_for_timeout(1500)
 
             p.evaluate(
                 """() => {
                     document.querySelectorAll("section[aria-label*='Notifications'], inapp-notif, .TUXModal-overlay").forEach(e => e.remove());
+                    const input = document.querySelector("[data-e2e='comment-input']");
+                    if (input) {
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
                 }"""
             )
-            # Submit via React onClick handler with nativeEvent
-            p.evaluate("""() => {
-                const btn = document.querySelector("[data-e2e='comment-post']");
-                if (!btn) return;
-                const reactKey = Object.keys(btn).find(k => k.startsWith("__reactProps$"));
-                if (reactKey && btn[reactKey] && typeof btn[reactKey].onClick === "function") {
-                    btn[reactKey].onClick({
-                        preventDefault: () => {},
-                        stopPropagation: () => {},
-                        nativeEvent: new MouseEvent("click", { bubbles: true, cancelable: true })
-                    });
-                }
-            }""")
+            p.wait_for_timeout(1000)
             post_btn = p.locator("[data-e2e='comment-post']").first
             try:
-                post_btn.click(force=True, timeout=3000)
+                post_btn.click(timeout=5000)
             except Exception:
+                try:
+                    post_btn.click(force=True, timeout=3000)
+                except Exception:
+                    pass
                 pass
             for _ in range(20):
                 if published_cid:

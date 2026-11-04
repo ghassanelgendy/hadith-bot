@@ -70,8 +70,11 @@ def main():
     else:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to post comment after retries on {post_url}")
         try:
-            why = ("TikTok showed a CAPTCHA, which the bot does not solve. Post it by hand or leave it; it stays queued."
-                   if getattr(post_comment, "last_failure", None) == "captcha" else "The comment could not be confirmed.")
+            if getattr(post_comment, "last_failure", None) == "captcha":
+                why = "TikTok required a CAPTCHA (sharh is already in the video description). Queue cleared."
+                PENDING_COMMENT_FILE.unlink(missing_ok=True)
+            else:
+                why = "The comment could not be confirmed."
             send_telegram(f"Scheduled comment for Hadith #{hadith_num} was not posted. {why}\n{post_url}")
         except Exception as e:
             print(f"Telegram notification error: {e}")
