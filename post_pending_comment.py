@@ -18,67 +18,11 @@ from tiktok_poster import (
 
 
 def main():
-    if not PENDING_COMMENT_FILE.exists():
-        print("No pending comment found. Nothing to post.")
-        return 0
-
-    try:
-        with open(PENDING_COMMENT_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as exc:
-        print(f"Error reading {PENDING_COMMENT_FILE}: {exc}")
-        return 1
-
-    post_url = data.get("post_url")
-    sharh = data.get("sharh")
-    hadith_num = data.get("hadith_number", "")
-    collection = data.get("collection", "")
-
-    if not post_url or not sharh:
-        print("Invalid pending comment data (missing post_url or sharh). Removing file.")
-        PENDING_COMMENT_FILE.unlink(missing_ok=True)
-        return 0
-
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting scheduled 8:00 PM comment post for Hadith {collection} #{hadith_num}...")
-    print(f"Target video: {post_url}")
-
-    success = False
-    with sync_playwright() as pw:
-        browser = _browser(pw, headless=True, channel="chrome")
-        try:
-            ctx = browser.new_context(
-                storage_state=str(SESSION_FILE),
-                user_agent=USER_AGENT,
-                viewport={"width": 1280, "height": 900},
-                permissions=["clipboard-read", "clipboard-write"],
-            )
-            ctx.add_init_script(STEALTH_JS)
-            success = post_comment(ctx, post_url, sharh, max_attempts=3)
-        except Exception as exc:
-            print(f"Error executing post_comment: {exc}")
-        finally:
-            browser.close()
-
-    if success:
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Successfully posted comment on {post_url}!")
-        PENDING_COMMENT_FILE.unlink(missing_ok=True)
-        try:
-            send_telegram(f"Comment posted successfully!\nHadith #{hadith_num}\n{post_url}")
-        except Exception as e:
-            print(f"Telegram notification error: {e}")
-        return 0
-    else:
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Failed to post comment after retries on {post_url}")
-        try:
-            if getattr(post_comment, "last_failure", None) == "captcha":
-                why = "TikTok required a CAPTCHA (sharh is already in the video description). Queue cleared."
-                PENDING_COMMENT_FILE.unlink(missing_ok=True)
-            else:
-                why = "The comment could not be confirmed."
-            send_telegram(f"Scheduled comment for Hadith #{hadith_num} was not posted. {why}\n{post_url}")
-        except Exception as e:
-            print(f"Telegram notification error: {e}")
-        return 1
+    # User decision: Do not post separate comments to TikTok (they trigger CAPTCHAs).
+    # Sharh is already included directly in the video description.
+    PENDING_COMMENT_FILE.unlink(missing_ok=True)
+    print("Comment posting disabled; sharh is placed in video description.")
+    return 0
 
 
 if __name__ == "__main__":

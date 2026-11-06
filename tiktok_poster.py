@@ -701,22 +701,10 @@ def queue_pending_comment(post_url, sharh, hadith=None):
 
 
 def comment_now_or_queue(context, post_url, sharh, hadith=None, settle_s=45):
-    """Comment in the same warm browser session right after the upload (a fresh headless session an hour
-    later triggers TikTok's CAPTCHA). The comment is queued first as a safety net: one attempt only here,
-    and on success the queue file is removed, otherwise the 17:00 UTC cron retries it."""
-    queue_pending_comment(post_url, sharh, hadith)
-    time.sleep(settle_s)  # let the new video finish processing before commenting
-    try:
-        ok = post_comment(context, post_url, sharh, max_attempts=1)
-    except Exception as exc:
-        print(f"comment_now_or_queue: {type(exc).__name__}: {exc}")
-        ok = False
-    if ok:
-        PENDING_COMMENT_FILE.unlink(missing_ok=True)
-        print("comment_now_or_queue: comment posted, queue cleared")
-    else:
-        print("comment_now_or_queue: not posted now; left queued for the scheduled retry")
-    return ok
+    """Disabled per user instruction: sharh is already included directly in the video description.
+    Automated commenting triggers TikTok puzzle CAPTCHAs, so commenting is omitted."""
+    PENDING_COMMENT_FILE.unlink(missing_ok=True)
+    return True
 
 
 def build_caption(hadith, sharh=None):
@@ -731,9 +719,9 @@ def build_caption(hadith, sharh=None):
     lines.append(f"{collection} - Hadith {hadith['hadith_number']}")
     if sharh:
         clean_sharh = _strip_tashkeel(sharh)
-        if len(clean_sharh) > 900:
-            cut = clean_sharh[:900].rfind(".")
-            clean_sharh = clean_sharh[: cut + 1] if cut > 250 else clean_sharh[:897] + "..."
+        if len(clean_sharh) > 1300:
+            cut = clean_sharh[:1300].rfind(".")
+            clean_sharh = clean_sharh[: cut + 1] if cut > 400 else clean_sharh[:1297] + "..."
         lines.append(f"شرح الحديث: {clean_sharh}")
     lines.append(" ".join(CAPTION_HASHTAGS))
     return "\n".join(lines)
