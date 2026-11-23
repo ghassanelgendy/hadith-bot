@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 import traceback
+from datetime import date
 
 from hadith_picker import load_state, pick_today
 from image_gen import generate_image, generate_layers, pick_palette
@@ -28,6 +29,10 @@ def main():
         if not args.no_post:
             send_telegram("TikTok post FAILED\nNo TikTok session saved on the server. Log in via the dashboard (Login to TikTok -> QR).")
         sys.exit(1)
+
+    if not args.no_post and load_state().get("posted_date") == date.today().isoformat():
+        print("Already posted today - refusing to post a duplicate.")
+        return
 
     try:
         hadith = pick_today()
@@ -68,6 +73,11 @@ def main():
             pass
         send_telegram(f"TikTok post FAILED\n{str(exc)[:280]}{ref}")
         sys.exit(1)
+
+    # Record success so a re-run the same day cannot upload a duplicate.
+    state = load_state()
+    state["posted_date"] = date.today().isoformat()
+    json.dump(state, open(STATE_FILE, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 
     msg = f"{hadith['arabic']}\n\nPosted - Hadith {hadith.get('hadith_number')}"
     if post_url:
