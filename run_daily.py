@@ -2,8 +2,9 @@ import argparse
 import json
 import sys
 import traceback
+from datetime import date
 
-from hadith_picker import load_state, pick_today
+from hadith_picker import load_state, pick_today, save_state
 from image_gen import generate_image, generate_layers, pick_palette
 from telegram_notify import send_telegram
 from tiktok_poster import build_caption, fetch_sharh, login, post_video
@@ -28,6 +29,12 @@ def main():
         if not args.no_post:
             send_telegram("TikTok post FAILED\nNo TikTok session saved on the server. Log in via the dashboard (Login to TikTok -> QR).")
         sys.exit(1)
+
+    if not args.no_post and load_state().get("posted_date") == date.today().isoformat():
+        # Guard against duplicate posts: a second run on the same day
+        # (cron + manual, retry, etc.) must never upload again.
+        print("Already posted today; skipping to avoid a duplicate post.")
+        return
 
     try:
         hadith = pick_today()
@@ -57,6 +64,9 @@ def main():
             video_path, caption, post_number=hadith.get("post_number", 1),
             sharh=sharh, hadith=hadith,
         )
+        state = load_state()
+        state["posted_date"] = date.today().isoformat()
+        save_state(state)
     except Exception as exc:
         traceback.print_exc()
         ref = ""
